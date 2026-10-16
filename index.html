@@ -59,6 +59,12 @@
                         </div>
                     </div>
 
+                    <!-- Checkout Suggestion Banner -->
+                    <div id="suggestionBox" style="margin-top: 0.8rem; padding: 0.6rem; background: rgba(16, 185, 129, 0.1); border: 1px dashed var(--accent-green); border-radius: 0.5rem; display: none; text-align: center;">
+                        <span class="form-label" style="color: var(--accent-green); margin-bottom: 0.1rem;">💡 Recommended Finish</span>
+                        <span id="suggestionText" style="font-size: 1rem; font-weight: 800; color: #34d399;">-</span>
+                    </div>
+
                     <!-- 3 Darts Status Slots -->
                     <div class="dart-slots">
                         <div id="dartBadge1" class="dart-badge">1</div>
@@ -221,30 +227,27 @@
             <div class="form-group">
                 <label class="form-label">Starting Board Face</label>
                 <select id="setupFaceSelect" class="form-select" onchange="toggleModeOptions()">
-                    <option value="1">Face 1 (Traditional 1-20 Board)</option>
-                    <option value="2">Face 2 (Target Rings Board)</option>
+                    <option value="1">Traditional</option>
+                    <option value="2">Target</option>
                 </select>
             </div>
 
             <div class="form-group" id="face1ModeGroup">
                 <label class="form-label">Face 1 Game Mode</label>
                 <select id="setupGameMode" class="form-select">
-                    <option value="101">101 Dart Game</option>
-                    <option value="301">301 Countdown Quick Match</option>
-                    <option value="501">501 Countdown Game</option>
-                    <option value="701">701 Countdown Long Match</option>
-                    <option value="COUNTUP">Count-Up High Score Mode</option>
+                    <option value="501">501</option>
+                    <option value="COUNTUP">High Score</option>
                 </select>
             </div>
 
             <div class="form-group" id="face2ModeGroup" style="display: none;">
                 <label class="form-label">Face 2 Game Mode / Duration</label>
                 <select id="setupRoundsSelect" class="form-select">
-                    <option value="4">4 Rounds Quick Game</option>
-                    <option value="8">8 Rounds High Score</option>
-                    <option value="10">10 Rounds High Score</option>
-                    <option value="12">12 Rounds High Score</option>
-                    <option value="COUNTUP">Unlimited Count-Up Mode</option>
+                    <option value="4">Quick Game</option>
+                    <option value="8">8 Rounds</option>
+                    <option value="10">10 Rounds</option>
+                    <option value="12">12 Rounds</option>
+                    <option value="COUNTUP">High Score</option>
                 </select>
             </div>
 

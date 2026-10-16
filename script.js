@@ -8,7 +8,8 @@ let state = {
     activeIdx: 0,
     currentTurnDarts: [],
     history: [],
-    isFinished: false
+    isFinished: false,
+    isTieBreakRound: false // Flag to track if we are in an overtime tie-breaker round
 };
 
 // Initialize state on page load
@@ -61,6 +62,9 @@ function startMatch() {
 
     if (face === 1) {
         mode = document.getElementById('setupGameMode').value;
+        if (mode === 'COUNTUP') {
+            rounds = 8; // Force 8 rounds for Face 1 Count-Up
+        }
     } else {
         const roundVal = document.getElementById('setupRoundsSelect').value;
         if (roundVal === 'COUNTUP') {
@@ -84,6 +88,7 @@ function startMatch() {
     state.currentTurnDarts = [];
     state.history = [];
     state.isFinished = false;
+    state.isTieBreakRound = false;
     state.players = [];
 
     playerInputs.forEach((inp, idx) => {
@@ -94,7 +99,8 @@ function startMatch() {
             startingScore: startScore,
             turnStartScore: startScore,
             totalDarts: 0,
-            currentRound: 1
+            currentRound: 1,
+            isEligibleForTieBreak: false
         });
     });
 
@@ -180,17 +186,19 @@ function submitCustomFace2() {
     }
 }
 
-/* Core Scoring Logic */
+/* Core Scoring Logic with Strict Double-Out Rules */
 function processThrow(face, label, points) {
     if (state.currentTurnDarts.length >= 3) return;
 
     const player = state.players[state.activeIdx];
     const isCountdown = state.activeFace === 1 && state.gameMode !== 'COUNTUP';
 
-    // Bust Check for Countdown Matches
+    // Strict Rule Check for Countdown Matches
     if (isCountdown) {
         const remaining = player.score - points;
-        if (remaining < 0 || remaining === 1) {
+        const isDoubleOrBull = (state.multiplier === 2) || (label === 'Bullseye');
+        
+        if (remaining < 0 || remaining === 1 || (remaining === 0 && !isDoubleOrBull)) {
             player.score = player.turnStartScore;
             state.history.unshift({
                 playerName: player.name,
@@ -253,8 +261,24 @@ function finishTurn() {
 
     // Check match end condition for Round-based games
     if (state.maxRounds > 0) {
-        const allFinished = state.players.every(p => p.currentRound > state.maxRounds);
+        let allFinished = false;
+
+        if (state.isTieBreakRound) {
+            // In tie-break round, check if all eligible tied players have completed the extra round
+            allFinished = state.players
+                .filter(p => p.isEligibleForTieBreak)
+                .every(p => p.currentRound > state.maxRounds + 1);
+        } else {
+            allFinished = state.players.every(p => p.currentRound > state.maxRounds);
+        }
+
         if (allFinished) {
+            if (!state.isTieBreakRound && state.gameMode === 'COUNTUP') {
+                // Check if top scores are tied after regular 8 rounds
+                if (checkForTieBreakCondition()) {
+                    return; // Transitioned into tie-break round
+                }
+            }
             evaluateRoundBasedWinner();
             return;
         }
@@ -264,7 +288,14 @@ function finishTurn() {
     let nextIdx = (state.activeIdx + 1) % state.players.length;
     if (state.maxRounds > 0) {
         let checkCount = 0;
-        while (state.players[nextIdx].currentRound > state.maxRounds && checkCount < state.players.length) {
+        while (checkCount < state.players.length) {
+            const nextP = state.players[nextIdx];
+            const roundLimit = state.isTieBreakRound ? state.maxRounds + 1 : state.maxRounds;
+            const validTieBreakTurn = !state.isTieBreakRound || nextP.isEligibleForTieBreak;
+
+            if (nextP.currentRound <= roundLimit && validTieBreakTurn) {
+                break;
+            }
             nextIdx = (nextIdx + 1) % state.players.length;
             checkCount++;
         }
@@ -275,6 +306,34 @@ function finishTurn() {
     nextPlayer.turnStartScore = nextPlayer.score;
     updateUI();
     resetTimer();
+}
+
+/* Check if top scores are tied in Count-Up to trigger overtime tie-breaker */
+function checkForTieBreakCondition() {
+    let maxScore = -1;
+    state.players.forEach(p => {
+        if (p.score > maxScore) maxScore = p.score;
+    });
+
+    const topPlayers = state.players.filter(p => p.score === maxScore);
+
+    if (topPlayers.length > 1) {
+        // Tie detected! Set up extra tie-breaker round
+        state.isTieBreakRound = true;
+        state.players.forEach(p => {
+            p.isEligibleForTieBreak = (p.score === maxScore);
+        });
+
+        // Find the first eligible tied player to start the overtime round
+        let firstEligibleIdx = state.players.findIndex(p => p.isEligibleForTieBreak);
+        state.activeIdx = firstEligibleIdx !== -1 ? firstEligibleIdx : 0;
+        state.players[state.activeIdx].turnStartScore = state.players[state.activeIdx].score;
+
+        updateUI();
+        resetTimer();
+        return true;
+    }
+    return false;
 }
 
 /* Determine Leaderboard Winner for Round Games */
@@ -289,39 +348,29 @@ function evaluateRoundBasedWinner() {
 
     document.getElementById('winnerPlayerName').textContent = `${winner.name} Wins!`;
     const avg = winner.totalDarts > 0 ? ((winner.score / winner.totalDarts) * 3).toFixed(1) : 0;
-    document.getElementById('winnerDetails').textContent = `Final Score: ${winner.score} Pts | Duration: ${state.maxRounds} Rounds | 3-Dart Avg: ${avg}`;
+    const roundText = state.isTieBreakRound ? `${state.maxRounds} Rounds + Tie-Breaker` : `${state.maxRounds} Rounds`;
+    document.getElementById('winnerDetails').textContent = `Final Score: ${winner.score} Pts | Duration: ${roundText} | 3-Dart Avg: ${avg}`;
     openModal('winnerModal');
     pauseTimer();
 }
 
 /* Undo Whole Round Handler */
 function undoLastDart() {
-    // Case 1: Active player has thrown darts in the current turn
     if (state.currentTurnDarts.length > 0) {
         const player = state.players[state.activeIdx];
-        
-        // Revert player's score to before the turn started
         player.score = player.turnStartScore;
-        
-        // Decrement total darts by darts thrown this turn
         player.totalDarts -= state.currentTurnDarts.length;
-        
-        // Remove turn entries from history
         state.history.splice(0, state.currentTurnDarts.length);
-        
-        // Clear turn darts
         state.currentTurnDarts = [];
         updateUI();
         return;
     }
 
-    // Case 2: Turn hasn't started yet, revert the previous player's entire last turn
     if (state.history.length > 0) {
         const lastEntry = state.history[0];
         const targetPlayerIdx = lastEntry.playerIdx;
         const targetPlayer = state.players[targetPlayerIdx];
 
-        // Find how many darts were thrown by this player in their last turn
         let dartsToUndo = 0;
         for (let i = 0; i < state.history.length; i++) {
             if (state.history[i].playerIdx === targetPlayerIdx) {
@@ -331,17 +380,13 @@ function undoLastDart() {
             }
         }
 
-        // Revert score and stats for that player
         targetPlayer.score = targetPlayer.turnStartScore;
         targetPlayer.totalDarts -= dartsToUndo;
         if (targetPlayer.currentRound > 1) {
             targetPlayer.currentRound -= 1;
         }
 
-        // Remove the entire turn from history log
         state.history.splice(0, dartsToUndo);
-
-        // Switch active index back to that player
         state.activeIdx = targetPlayerIdx;
         state.currentTurnDarts = [];
 
@@ -360,12 +405,44 @@ function triggerWinner(player) {
     pauseTimer();
 }
 
+/* Intelligent Checkout Suggestion Engine */
+function getCheckoutSuggestion(score) {
+    if (score > 170 || [169, 168, 166, 165, 163, 162, 159].includes(score)) {
+        return score > 170 ? "Setup shot (Reduce score)" : "No direct checkout";
+    }
+
+    const checkouts = {
+        170: "T20 - T20 - Bull",
+        167: "T20 - T19 - Bull",
+        164: "T20 - T18 - Bull",
+        161: "T20 - T17 - Bull",
+        160: "T20 - T20 - D20",
+        100: "T20 - D20",
+        50: "Bullseye (D25)",
+        40: "Top (D20)",
+        32: "D16",
+        16: "D8",
+        8: "D4",
+        4: "D2",
+        2: "D1"
+    };
+
+    if (checkouts[score]) return checkouts[score];
+
+    if (score % 2 === 0 && score <= 40) {
+        return `Aim for Double ${score / 2} (D${score / 2})`;
+    } else if (score <= 60 && score > 40) {
+        return `Single ${score - 40} -> Top (D20)`;
+    } else {
+        return `Reduce score to leave a Double`;
+    }
+}
+
 // Global Timer Variables
 let timerInterval = null;
 let timeLeft = 30;
 let isTimerRunning = false;
 
-// Audio Context setup for synthetic beep sounds (no external audio files needed)
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
 
 function playBeep(frequency = 440, duration = 0.15, type = 'sine') {
@@ -392,8 +469,6 @@ function updateTimerDisplay() {
     const display = document.getElementById('timerDisplay');
     if (display) {
         display.textContent = `${timeLeft}s`;
-        
-        // Highlight display in red during final 5 seconds
         if (timeLeft <= 5 && timeLeft > 0) {
             display.style.color = '#ef4444';
         } else if (timeLeft === 0) {
@@ -406,8 +481,6 @@ function updateTimerDisplay() {
 
 function startTimer() {
     if (isTimerRunning) return;
-    
-    // Resume audio context on user interaction
     if (audioCtx.state === 'suspended') {
         audioCtx.resume();
     }
@@ -418,13 +491,10 @@ function startTimer() {
             timeLeft--;
             updateTimerDisplay();
 
-            // Sound plays ONLY when 5, 4, 3, 2, 1 seconds remain
             if (timeLeft <= 5 && timeLeft > 0) {
-                playBeep(600, 0.12, 'sine'); // Short warning beep
-            } 
-            // Final longer/higher pitch sound when timer reaches 0s
-            else if (timeLeft === 0) {
-                playBeep(900, 0.5, 'square'); // Buzzer sound for time ended
+                playBeep(600, 0.12, 'sine');
+            } else if (timeLeft === 0) {
+                playBeep(900, 0.5, 'square');
                 clearInterval(timerInterval);
                 isTimerRunning = false;
             }
@@ -451,8 +521,9 @@ function updateUI() {
     const isCountdown = state.activeFace === 1 && state.gameMode !== 'COUNTUP';
 
     document.getElementById('gameModeBadge').textContent = 
-        state.maxRounds > 0 ? `${state.maxRounds}-ROUND HIGH SCORE` :
-        (state.gameMode === 'COUNTUP' ? 'COUNT-UP MODE' : `${state.gameMode} GAME`);
+        state.isTieBreakRound ? '⚠️ TIE-BREAKER OVERTIME ROUND' :
+        (state.maxRounds > 0 ? `${state.maxRounds}-ROUND HIGH SCORE` :
+        (state.gameMode === 'COUNTUP' ? 'COUNT-UP MODE' : `${state.gameMode} GAME`));
 
     document.getElementById('scoreLabel').textContent = 
         isCountdown ? 'REMAINING SCORE' : 'TOTAL CUMULATIVE SCORE';
@@ -465,9 +536,14 @@ function updateUI() {
     const roundOverviewLabel = document.getElementById('roundOverviewLabel');
     if (state.maxRounds > 0) {
         roundBadge.style.display = 'inline-block';
-        const curR = Math.min(activeP.currentRound, state.maxRounds);
-        roundBadge.textContent = `Round ${curR} / ${state.maxRounds}`;
-        roundOverviewLabel.textContent = `Round ${curR} / ${state.maxRounds}`;
+        if (state.isTieBreakRound) {
+            roundBadge.textContent = `Tie-Breaker Overtime`;
+            roundOverviewLabel.textContent = `Tie-Breaker Overtime`;
+        } else {
+            const curR = Math.min(activeP.currentRound, state.maxRounds);
+            roundBadge.textContent = `Round ${curR} / ${state.maxRounds}`;
+            roundOverviewLabel.textContent = `Round ${curR} / ${state.maxRounds}`;
+        }
     } else {
         roundBadge.style.display = 'inline-block';
         roundBadge.textContent = `Round ${activeP.currentRound}`;
@@ -483,6 +559,16 @@ function updateUI() {
         avg = ((scored / activeP.totalDarts) * 3).toFixed(1);
     }
     document.getElementById('activePlayerAvg').textContent = avg;
+
+    // Checkout Suggestion Renderer
+    const suggestionBox = document.getElementById('suggestionBox');
+    const suggestionText = document.getElementById('suggestionText');
+    if (isCountdown && activeP.score <= 170 && activeP.score > 1) {
+        suggestionBox.style.display = 'block';
+        suggestionText.textContent = getCheckoutSuggestion(activeP.score);
+    } else {
+        suggestionBox.style.display = 'none';
+    }
 
     // Dart Badge Indicators
     for (let i = 1; i <= 3; i++) {
@@ -508,8 +594,18 @@ function updateUI() {
             activeClass = state.activeFace === 2 ? 'active active-face2' : 'active';
         }
         
-row.className = `player-row ${activeClass}`;
-        const rText = state.maxRounds > 0 ? `(R${Math.min(p.currentRound, state.maxRounds)}/${state.maxRounds})` : `(R${p.currentRound})`;
+        row.className = `player-row ${activeClass}`;
+        let rText = '';
+        if (state.maxRounds > 0) {
+            if (state.isTieBreakRound) {
+                rText = p.isEligibleForTieBreak ? '(Tie-Break)' : '(Eliminated)';
+            } else {
+                rText = `(R${Math.min(p.currentRound, state.maxRounds)}/${state.maxRounds})`;
+            }
+        } else {
+            rText = `(R${p.currentRound})`;
+        }
+
         row.innerHTML = `
             <div style="font-weight:800; font-size:1.05rem;">${p.name} ${active ? '🎯' : ''} <span style="font-size:0.75rem; color:var(--text-muted); font-weight:600;">${rText}</span></div>
             <div style="font-weight:900; font-size:1.25rem; color:${active ? '#f59e0b' : 'white'};">${p.score}</div>
